@@ -1,13 +1,17 @@
 import os
-from flask import Flask
+import secrets
+from flask import Flask, jsonify
 from flask_smorest import Api
+from flask_jwt_extended import JWTManager
 
 from db import db
 import models
+from blocklist import BLOCKLIST
 
 from resources.store import blp as StoreBlueprint
 from resources.item import blp as ItemBlueprint
 from resources.tag import blp as TagBlueprint
+from resources.user import blp as UserBlueprint
 
 def create_app(db_url=None):
     app = Flask(__name__)
@@ -24,11 +28,57 @@ def create_app(db_url=None):
 
     api = Api(app)
 
+    app.config["JWT_SECRET_KEY"] = "230412418757539548218978978107792680713"
+
+    jwt = JWTManager(app)
+
+    @jwt.token_in_blocklist_loader
+    def check_if_token_in_blocklist(jwt_header, jwt_payload):
+        return jwt_payload["jti"] in BLOCKLIST
+
+    @jwt.expired_token_loader
+    def expired_token_callback(jwt_header, jwt_payload):
+        return (
+            jsonify({"message": "The token has expired", "error": "token_expired"}),
+            401
+        )
+
+    @jwt.invalid_token_loader
+    def invalid_token_callback(error):
+        return (
+            jsonify({"message": "Signature verification failed", "error": "Ivalid token"}),
+            401
+        )
+
+    @jwt.unauthorized_loader
+    def missing_token_callback(error):
+        return (
+            jsonify({"error": "missing token"}),
+            401
+        )
+    
+    @jwt.additional_claims_loader
+    def add_claims_to_jwt(identity):
+        if str(identity) == "1":
+            return {"is_admin": True}
+        return {"is_admin": False}
+
+    @jwt.needs_fresh_token_loader
+    def token_not_fresh_callback(jwt_header,jwt_payload):
+        return (
+            jsonify({
+                "description": "The token is not fresh",
+                "error": "fresh_token_requred"
+            }),
+            404
+        )
+
     with app.app_context():
         db.create_all()
 
     api.register_blueprint(ItemBlueprint)
     api.register_blueprint(StoreBlueprint)
     api.register_blueprint(TagBlueprint)
+    app.register_blueprint(UserBlueprint)
 
     return app
